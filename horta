@@ -1,0 +1,130 @@
+// Parâmetros Blynk
+#define BLYNK_TEMPLATE_ID "  "
+#define BLYNK_TEMPLATE_NAME "  "
+#define BLYNK_AUTH_TOKEN "  "
+
+#define BLYNK_PRINT Serial // Mensagens de depuração e log para a porta serial
+
+// Pinos de dados
+#define dado_umidade_solo A0
+#define dado_rele D7
+
+// Bibliotecas
+#include <BlynkSimpleEsp8266.h>
+#include <Adafruit_Sensor.h>
+#include <ESP8266WiFi.h>
+#include <DHT.h>
+
+// Rede Wi-Fi
+char auth[] = BLYNK_AUTH_TOKEN; // Utiliza o token de autenticação Blynk definido acima
+char ssid[] = "LUCAS"; // Nome da rede Wi-Fi
+char pass[] = "lucas2003"; // Senha da rede Wi-Fi
+
+// Váriaveis auxiliares
+int controle_deslizante_limite_inferior_umidade_solo;
+bool botao_controle_automatico;
+bool botao_bomba;
+
+BlynkTimer timer; // Envio de dados periódicos
+
+DHT dht(D5, DHT11); // Armazena o tipo de DHT (11) e seu pino (D5)
+
+void setup() {
+  
+  // Configuração dos pinos
+  pinMode(dado_rele, OUTPUT);
+  pinMode(dado_umidade_solo, INPUT);
+  pinMode(D5, INPUT);
+  
+  dht.begin(); // Inicializa o DHT
+
+  Serial.begin(9600); // Comunicação serial a 9600bps
+  Serial.println("Setup iniciado");
+
+  Blynk.begin(auth, ssid, pass, "blynk.cloud", 80); // Inicialização da conexão Blynk
+
+  // Configuração de intervalos de execução das funções
+  timer.setInterval(1000L, ler_mapear_e_enviar_dado_umidade_solo); // Chama a cada 1 segundo
+  timer.setInterval(1000L, ler_e_enviar_dados_DHT); // Chama a cada 1 segundo
+}
+
+// Sincronização dos pinos virtuais quando houver uma conexão
+BLYNK_CONNECTED() {
+    Blynk.syncVirtual(V1);  // pino virtual do botao_controle_automatico
+    Blynk.syncVirtual(V11); // pino virtual do botao_bomba
+    Blynk.syncVirtual(V8); // pino virtual do controle_deslizante_limite_inferior_umidade_solo
+}
+
+// Atualização dos pinos virtuais e controle da bomba de água quando houver alguma mudança de estado
+BLYNK_WRITE(V11) {
+  botao_controle_automatico = param.asInt();
+}
+BLYNK_WRITE(V8) {
+  controle_deslizante_limite_inferior_umidade_solo = param.asInt();
+}
+BLYNK_WRITE(V1) {
+  botao_bomba = param.asInt();
+}
+
+// Função para ler, mapear e enviar a umidade do solo
+void ler_mapear_e_enviar_dado_umidade_solo() {
+  int valor = analogRead(dado_umidade_solo); // Lê a tensão e converte para um valor entre 0 e 1024
+  
+  if (valor == 1024) {
+      valor = 0;
+    } else {
+      valor = map(valor, 0, 1024, 100, 0); // Converte o valor para porcentagem
+    }
+
+  Blynk.virtualWrite(V0, valor);  // Atualiza o pino virtual V0 com a leitura do dado_umidade_solo
+}
+
+// Função para ler e enviar a umidade e temperatura do DHT
+void ler_e_enviar_dados_DHT() {
+  float u = dht.readHumidity();     // Lê a umidade do DHT
+  float t = dht.readTemperature();  // Lê a temperatura do DHT
+
+  // Se a leitura do DHT falhar, imprime uma mensagem de erro
+  if (isnan(u) || isnan(t)) {
+    Serial.println("Falha na leitura do dado_umidade_solo!"); 
+    return;
+  }
+
+  // Envia os valores de umidade e temperatura para o aplicativo Blynk
+  Blynk.virtualWrite(V5, u);  // Atualiza o pino virtual V5 com a leitura da umidade
+  Blynk.virtualWrite(V6, t);  // Atualiza o pino virtua V6 com a leitura da temperatura
+}
+
+// Função para controlar o dado_rele com base no botao_controle_automatico, botao_bomba e controle_deslizante_limite_inferior_umidade_solo
+void controlar_bomba_de_agua() {
+  if (botao_controle_automatico) {
+    int valor = analogRead(dado_umidade_solo); // Lê a tensão e converte para um valor entre 0 e 1024
+    if (valor == 1024) {
+      valor = 0;
+    } else {
+      valor = map(valor, 0, 1024, 100, 0); // Converte o valor para porcentagem
+    }
+
+    if (valor < controle_deslizante_limite_inferior_umidade_solo) {
+      digitalWrite(dado_rele, HIGH);
+      Blynk.virtualWrite(V4, HIGH); // Atualiza o pino virtual V4 com a leitura da bomba de água
+    } else if (valor > controle_deslizante_limite_inferior_umidade_solo + 5) { // Adiciona uma margem de 10% para criar a histerese
+      digitalWrite(dado_rele, LOW);
+      Blynk.virtualWrite(V4, LOW); // Atualiza o pino virtual V4 com a leitura da bomba de água
+    }
+  } else {
+    if (botao_bomba) {
+      digitalWrite(dado_rele, HIGH);
+      Blynk.virtualWrite(V4, HIGH); // Atualiza o pino virtual V4 com a leitura da bomba de água
+    } else {
+      digitalWrite(dado_rele, LOW);
+      Blynk.virtualWrite(V4, LOW); // Atualiza o pino virtual V4 com a leitura da bomba de água
+    }
+  }
+}
+
+void loop() {
+  Blynk.run();  // Executa o loop de comunicação com o servidor Blynk
+  timer.run();   // Executa o temporizador Blynk
+  controlar_bomba_de_agua(); // Chama a função controlar_bomba_de_agua() em cada ciclo do loop
+}
